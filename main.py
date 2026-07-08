@@ -1,344 +1,139 @@
-from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
+"""
+CLI entrypoint.
+
+Examples:
+  python main.py analyze --symbol R_100 --count 1000
+  python main.py dashboard
+  python main.py backtest --symbol R_100 --stake 1 --growth-rate 0.03
+  python main.py bot --symbol R_100 --stake 1 --growth-rate 0.02          # dry run (default)
+  python main.py bot --symbol R_100 --stake 1 --growth-rate 0.02 --live --i-understand-the-risk
+"""
+from __future__ import annotations
+
+import argparse
+import asyncio
+import logging
+import sys
+
+from accumulator import max_ticks_for_cap
+from analysis import compute_tick_stats
+from backtest import run_backtest_grid
+from bot import AccumulatorBot
+from config import DerivConfig
+from dashboard import run_dashboard
+from deriv_client import DerivClient
+from risk_manager import RiskManager
+from strategy import FixedStakeExampleStrategy
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+logger = logging.getLogger("main")
 
 
-app = FastAPI(
-    title="Vercel + FastAPI",
-    description="Vercel + FastAPI",
-    version="1.0.0",
-)
+async def cmd_analyze(args, cfg: DerivConfig) -> None:
+    async with DerivClient(cfg.ws_url, cfg.api_token if args.auth else None) as client:
+        hist = await client.tick_history(args.symbol, count=args.count)
+        prices = [float(p) for p in hist.get("history", {}).get("prices", [])]
+        if not prices:
+            print("No price data returned -- check the symbol code, e.g. R_100, R_50, 1HZ100V.")
+            return
+        stats = compute_tick_stats(args.symbol, prices)
+        print(stats.summary())
 
 
-@app.get("/api/data")
-def get_sample_data():
-    return {
-        "data": [
-            {"id": 1, "name": "Sample Item 1", "value": 100},
-            {"id": 2, "name": "Sample Item 2", "value": 200},
-            {"id": 3, "name": "Sample Item 3", "value": 300}
-        ],
-        "total": 3,
-        "timestamp": "2024-01-01T00:00:00Z"
-    }
+async def cmd_dashboard(args, cfg: DerivConfig) -> None:
+    cfg.validate()
+    async with DerivClient(cfg.ws_url, cfg.api_token) as client:
+        await run_dashboard(client, refresh_seconds=args.refresh)
 
 
-@app.get("/api/items/{item_id}")
-def get_item(item_id: int):
-    return {
-        "item": {
-            "id": item_id,
-            "name": "Sample Item " + str(item_id),
-            "value": item_id * 100
-        },
-        "timestamp": "2024-01-01T00:00:00Z"
-    }
+async def cmd_backtest(args, cfg: DerivConfig) -> None:
+    cfg.validate()
+    async with DerivClient(cfg.ws_url, cfg.api_token) as client:
+        results = await run_backtest_grid(
+            client, args.symbol, args.stake, args.growth_rate,
+            tick_count=args.count, targets=args.targets,
+        )
+        cap_ticks = max_ticks_for_cap(args.stake, args.growth_rate)
+        print(f"($10,000 payout cap reached at ~{cap_ticks} surviving ticks for this stake/growth_rate)\n")
+        for r in results:
+            print(r.summary())
+            print()
 
 
-@app.get("/", response_class=HTMLResponse)
-def read_root():
-    return """
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Vercel + FastAPI</title>
-        <link rel="icon" type="image/x-icon" href="/favicon.ico">
-        <style>
-            * {
-                margin: 0;
-                padding: 0;
-                box-sizing: border-box;
-            }
-            
-            body {
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
-                background-color: #000000;
-                color: #ffffff;
-                line-height: 1.6;
-                min-height: 100vh;
-                display: flex;
-                flex-direction: column;
-            }
-            
-            header {
-                border-bottom: 1px solid #333333;
-                padding: 0;
-            }
-            
-            nav {
-                max-width: 1200px;
-                margin: 0 auto;
-                display: flex;
-                align-items: center;
-                padding: 1rem 2rem;
-                gap: 2rem;
-            }
-            
-            .logo {
-                font-size: 1.25rem;
-                font-weight: 600;
-                color: #ffffff;
-                text-decoration: none;
-            }
-            
-            .nav-links {
-                display: flex;
-                gap: 1.5rem;
-                margin-left: auto;
-            }
-            
-            .nav-links a {
-                text-decoration: none;
-                color: #888888;
-                padding: 0.5rem 1rem;
-                border-radius: 6px;
-                transition: all 0.2s ease;
-                font-size: 0.875rem;
-                font-weight: 500;
-            }
-            
-            .nav-links a:hover {
-                color: #ffffff;
-                background-color: #111111;
-            }
-            
-            main {
-                flex: 1;
-                max-width: 1200px;
-                margin: 0 auto;
-                padding: 4rem 2rem;
-                display: flex;
-                flex-direction: column;
-                align-items: center;
-                text-align: center;
-            }
-            
-            .hero {
-                margin-bottom: 3rem;
-            }
-            
-            .hero-code {
-                margin-top: 2rem;
-                width: 100%;
-                max-width: 900px;
-                display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-            }
-            
-            .hero-code pre {
-                background-color: #0a0a0a;
-                border: 1px solid #333333;
-                border-radius: 8px;
-                padding: 1.5rem;
-                text-align: left;
-                grid-column: 1 / -1;
-            }
-            
-            h1 {
-                font-size: 3rem;
-                font-weight: 700;
-                margin-bottom: 1rem;
-                background: linear-gradient(to right, #ffffff, #888888);
-                -webkit-background-clip: text;
-                -webkit-text-fill-color: transparent;
-                background-clip: text;
-            }
-            
-            .subtitle {
-                font-size: 1.25rem;
-                color: #888888;
-                margin-bottom: 2rem;
-                max-width: 600px;
-            }
-            
-            .cards {
-                display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-                gap: 1.5rem;
-                width: 100%;
-                max-width: 900px;
-            }
-            
-            .card {
-                background-color: #111111;
-                border: 1px solid #333333;
-                border-radius: 8px;
-                padding: 1.5rem;
-                transition: all 0.2s ease;
-                text-align: left;
-            }
-            
-            .card:hover {
-                border-color: #555555;
-                transform: translateY(-2px);
-            }
-            
-            .card h3 {
-                font-size: 1.125rem;
-                font-weight: 600;
-                margin-bottom: 0.5rem;
-                color: #ffffff;
-            }
-            
-            .card p {
-                color: #888888;
-                font-size: 0.875rem;
-                margin-bottom: 1rem;
-            }
-            
-            .card a {
-                display: inline-flex;
-                align-items: center;
-                color: #ffffff;
-                text-decoration: none;
-                font-size: 0.875rem;
-                font-weight: 500;
-                padding: 0.5rem 1rem;
-                background-color: #222222;
-                border-radius: 6px;
-                border: 1px solid #333333;
-                transition: all 0.2s ease;
-            }
-            
-            .card a:hover {
-                background-color: #333333;
-                border-color: #555555;
-            }
-            
-            .status-badge {
-                display: inline-flex;
-                align-items: center;
-                gap: 0.5rem;
-                background-color: #0070f3;
-                color: #ffffff;
-                padding: 0.25rem 0.75rem;
-                border-radius: 20px;
-                font-size: 0.75rem;
-                font-weight: 500;
-                margin-bottom: 2rem;
-            }
-            
-            .status-dot {
-                width: 6px;
-                height: 6px;
-                background-color: #00ff88;
-                border-radius: 50%;
-            }
-            
-            pre {
-                background-color: #0a0a0a;
-                border: 1px solid #333333;
-                border-radius: 6px;
-                padding: 1rem;
-                overflow-x: auto;
-                margin: 0;
-            }
-            
-            code {
-                font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
-                font-size: 0.85rem;
-                line-height: 1.5;
-                color: #ffffff;
-            }
-            
-            /* Syntax highlighting */
-            .keyword {
-                color: #ff79c6;
-            }
-            
-            .string {
-                color: #f1fa8c;
-            }
-            
-            .function {
-                color: #50fa7b;
-            }
-            
-            .class {
-                color: #8be9fd;
-            }
-            
-            .module {
-                color: #8be9fd;
-            }
-            
-            .variable {
-                color: #f8f8f2;
-            }
-            
-            .decorator {
-                color: #ffb86c;
-            }
-            
-            @media (max-width: 768px) {
-                nav {
-                    padding: 1rem;
-                    flex-direction: column;
-                    gap: 1rem;
-                }
-                
-                .nav-links {
-                    margin-left: 0;
-                }
-                
-                main {
-                    padding: 2rem 1rem;
-                }
-                
-                h1 {
-                    font-size: 2rem;
-                }
-                
-                .hero-code {
-                    grid-template-columns: 1fr;
-                }
-                
-                .cards {
-                    grid-template-columns: 1fr;
-                }
-            }
-        </style>
-    </head>
-    <body>
-        <header>
-            <nav>
-                <a href="/" class="logo">Vercel + FastAPI</a>
-                <div class="nav-links">
-                    <a href="/docs">API Docs</a>
-                    <a href="/api/data">API</a>
-                </div>
-            </nav>
-        </header>
-        <main>
-            <div class="hero">
-                <h1>Vercel + FastAPI</h1>
-                <div class="hero-code">
-                    <pre><code><span class="keyword">from</span> <span class="module">fastapi</span> <span class="keyword">import</span> <span class="class">FastAPI</span>
+async def cmd_bot(args, cfg: DerivConfig) -> None:
+    cfg.validate()
 
-<span class="variable">app</span> = <span class="class">FastAPI</span>()
+    live = args.live
+    if live and not args.i_understand_the_risk:
+        print(
+            "Refusing to start in --live mode without --i-understand-the-risk.\n"
+            "This will place real trades and can lose real money. Test with "
+            "dry-run (the default, omit --live) or a demo-account token first."
+        )
+        sys.exit(1)
 
-<span class="decorator">@app.get</span>(<span class="string">"/"</span>)
-<span class="keyword">def</span> <span class="function">read_root</span>():
-    <span class="keyword">return</span> {<span class="string">"Python"</span>: <span class="string">"on Vercel"</span>}</code></pre>
-                </div>
-            </div>
-            
-            <div class="cards">
-                <div class="card">
-                    <h3>Interactive API Docs</h3>
-                    <p>Explore this API's endpoints with the interactive Swagger UI. Test requests and view response schemas in real-time.</p>
-                    <a href="/docs">Open Swagger UI →</a>
-                </div>
-                
-                <div class="card">
-                    <h3>Sample Data</h3>
-                    <p>Access sample JSON data through our REST API. Perfect for testing and development purposes.</p>
-                    <a href="/api/data">Get Data →</a>
-                </div>
-                
-            </div>
-        </main>
-    </body>
-    </html>
-    """
+    async with DerivClient(cfg.ws_url, cfg.api_token) as client:
+        if live and not client.account_info.get("is_virtual"):
+            print(
+                f"WARNING: authorized account {client.account_info.get('loginid')} "
+                "is a REAL MONEY account and --live is set. Trades placed by this "
+                "bot will use real funds."
+            )
+        elif live:
+            print(f"--live set, but authorized account {client.account_info.get('loginid')} is a demo account.")
+
+        strategy = FixedStakeExampleStrategy(
+            stake=args.stake, growth_rate=args.growth_rate, take_profit=args.take_profit,
+            max_trades_per_day=cfg.risk.max_trades_per_day,
+        )
+        risk_manager = RiskManager(cfg.risk)
+        bot = AccumulatorBot(
+            client, strategy, risk_manager, args.symbol,
+            dry_run=not live,
+        )
+        await bot.run()
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(description="Deriv analysis / account / bot toolkit")
+    sub = p.add_subparsers(dest="command", required=True)
+
+    a = sub.add_parser("analyze", help="Pull tick history and print statistics")
+    a.add_argument("--symbol", default="R_100", help="e.g. R_100, R_50, 1HZ100V")
+    a.add_argument("--count", type=int, default=1000)
+    a.add_argument("--auth", action="store_true", help="Authorize with your token (not required for public tick data)")
+    a.set_defaults(func=cmd_analyze)
+
+    d = sub.add_parser("dashboard", help="Live-updating account dashboard")
+    d.add_argument("--refresh", type=float, default=5.0)
+    d.set_defaults(func=cmd_dashboard)
+
+    b = sub.add_parser("backtest", help="Backtest an accumulator target-ticks rule against history")
+    b.add_argument("--symbol", default="R_100")
+    b.add_argument("--stake", type=float, default=1.0)
+    b.add_argument("--growth-rate", type=float, default=0.03, choices=[0.01, 0.02, 0.03, 0.04, 0.05])
+    b.add_argument("--count", type=int, default=5000, help="How many historical ticks to pull")
+    b.add_argument("--targets", type=int, nargs="+", default=[5, 10, 15, 20, 30, 50])
+    b.set_defaults(func=cmd_backtest)
+
+    bot_p = sub.add_parser("bot", help="Run the (dry-run by default) accumulator bot")
+    bot_p.add_argument("--symbol", default="R_100")
+    bot_p.add_argument("--stake", type=float, default=1.0)
+    bot_p.add_argument("--growth-rate", type=float, default=0.02, choices=[0.01, 0.02, 0.03, 0.04, 0.05])
+    bot_p.add_argument("--take-profit", type=float, default=None)
+    bot_p.add_argument("--live", action="store_true", help="Place real orders instead of dry-run logging")
+    bot_p.add_argument("--i-understand-the-risk", action="store_true")
+    bot_p.set_defaults(func=cmd_bot)
+
+    return p
+
+
+def main() -> None:
+    parser = build_parser()
+    args = parser.parse_args()
+    cfg = DerivConfig()
+    asyncio.run(args.func(args, cfg))
+
+
+if __name__ == "__main__":
+    main()
