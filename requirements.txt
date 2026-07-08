@@ -1,3 +1,5 @@
+fastapi>=0.135.3
+uvicorn>=0.34.0
 websockets>=12.0
 numpy>=1.26
 rich>=13.7

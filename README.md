@@ -63,10 +63,34 @@ Common symbols: `R_10`, `R_25`, `R_50`, `R_75`, `R_100` (Volatility Indices),
 `1HZ100V`, `1HZ50V`, etc. (1-second Volatility Indices). Full list via the
 `active_symbols` API call (see `DerivClient.active_symbols`).
 
+## Web Interface
+
+This toolkit now includes a FastAPI web interface with Vercel Web Analytics integration. When deployed to Vercel, you can:
+
+- Access the web dashboard at the root URL (`/`)
+- View API health status at `/api/health`
+- Access service information at `/api/info`
+- Browse interactive API docs at `/docs`
+
+The web interface automatically tracks visitor analytics when deployed on Vercel.
+
+### Local Development
+
+To run the web interface locally:
+
+```bash
+pip install uvicorn
+uvicorn api.index:app --reload
+```
+
+Then visit `http://localhost:8000` in your browser.
+
 ## Project layout
 
 | File | Purpose |
 |---|---|
+| `api/index.py` | FastAPI web application with Vercel Analytics |
+| `vercel.json` | Vercel deployment configuration |
 | `config.py` | Loads API token, app_id, and risk limits from env/`.env` |
 | `deriv_client.py` | Async WebSocket client for the Deriv API |
 | `analysis.py` | Tick statistics, volatility, streak/run-length analysis |
